@@ -191,16 +191,6 @@ begin
 	fig
 end
 
-# ╔═╡ 422e95ea-0753-44fd-9da4-4e8093a20fde
-# ╠═╡ disabled = true
-#=╠═╡
-begin
-	f = Figure()
-	ax = Axis(fig[1, 1])
-	bracket!(ax, [(Point(1.0, 1.0), Point(2.0, 2.0))])
-end
-  ╠═╡ =#
-
 # ╔═╡ af77e83b-2ad5-4707-968b-79bdd15f0fb3
 warning(text) = Markdown.MD(Markdown.Admonition("warning", "Warning!", [text]));
 
@@ -1979,7 +1969,6 @@ version = "3.5.0+0"
 # ╠═ac38c36f-cfcb-4cda-9c4e-f772ea64d068
 # ╠═fcbe51d5-9edc-4f96-8013-a666aaa47105
 # ╠═d71f559d-fe5b-4ffb-9b01-2a2a7dc5e5d6
-# ╠═422e95ea-0753-44fd-9da4-4e8093a20fde
 # ╟─af77e83b-2ad5-4707-968b-79bdd15f0fb3
 # ╟─9eb627d9-e6f1-46ec-a846-f1b5d6633789
 # ╟─a702c503-b775-4548-ba2d-c5610fd40ead
