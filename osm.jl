@@ -21,7 +21,7 @@ using PlutoUI
 using JSON
 
 # ╔═╡ a1c68695-0feb-45b3-9982-239ad1139d70
-using Graphs, GeometryBasics, MetaGraphsNext
+using Graphs, GeometryBasics, MetaGraphsNext, IterTools
 
 # ╔═╡ ac38c36f-cfcb-4cda-9c4e-f772ea64d068
 using GeoMakie, CairoMakie, GeoJSON, Downloads, Geodesy
@@ -130,26 +130,24 @@ overpass_ways = filter(n -> n["type"] == "way", overpass_data["elements"]);
 # ╔═╡ 33fb8544-39db-43c4-962a-ac94c63c6dfa
 md"## Create Graph"
 
-# ╔═╡ 65fc3ed7-969e-472c-a60d-04705cacee6b
-track_graph = MetaGraph(
-	DiGraph(),
-	label_type=Int, # OSM Id
-	vertex_data_type=Point,
-	edge_data_type=Dict
-);
-
 # ╔═╡ 721272b3-b6f7-4262-ae68-d4cec9142b84
 function add_vertex_to_track_graph(graph, node_id) 
 	graph[node_id] = Point(nodes[node_id]["lon"], nodes[node_id]["lat"])
 end;
 
-# ╔═╡ e0ff40d2-1f03-47b1-a52e-1cbd638e9053
+# ╔═╡ 65fc3ed7-969e-472c-a60d-04705cacee6b
 begin
-	using IterTools
+	track_graph = MetaGraph(
+		DiGraph(),
+		label_type=Int, # OSM Id
+		vertex_data_type=Point,
+		edge_data_type=Dict
+	);
+	
 	for way in overpass_ways
 		# Add first vertex, because it's skipped in the loop
 		add_vertex_to_track_graph(track_graph, first(way["nodes"]))
-
+	
 		for (prev_node_id, node_id) in partition(way["nodes"], 2, 1)
 			# Add Vertex to graph
 			add_vertex_to_track_graph(track_graph, node_id)
@@ -193,13 +191,10 @@ function calculate_radius(coord1, coord2, coord3)
 end
 
 # ╔═╡ 603538b6-119d-4ea3-949e-1bb5a9cc965a
-for vertex in labels(track_graph)
+for label in labels(track_graph)
 	outneighbor_label = outneighbor_labels(track_graph, label)
 	inneighbor_label = inneighbor_labels(track_graph, label)
 	vertex = track_graph[label]
-
-
-	radius = Inf
 	
 	if length(outneighbor_label) == 1 && length(inneighbor_label) == 1
 		before_node = track_graph[first(outneighbor_label)]
@@ -208,48 +203,51 @@ for vertex in labels(track_graph)
 		# Maximum Radius is 2500m in DB Germany
 		# Radii > 700 m keinen Einfluss mehr
 		radius = calculate_radius(before_node, vertex, after_node)
-	end
+	
+		@debug radius
 
-	@debug radius
-	if radius > 3000
+		if radius > 3000
 		color = :black
-	elseif radius > 2500
-		color = :green
-	elseif radius > 800
-		color = :yellow
-	elseif radius > 700
-		color = :orange
-	else
-		color = :red
+		elseif radius > 2500
+			color = :green
+		elseif radius > 800
+			color = :yellow
+		elseif radius > 700
+			color = :orange
+		else
+			color = :red
+		end
 	end
 end
 
-# ╔═╡ f2a9882e-89e9-49c5-acc4-b483c554b53a
-fig = Figure()
-
 # ╔═╡ 54835698-c768-4347-a6ce-1d1e72725d5b
-ga = GeoAxis(fig[1, 1]; dest = "+proj=merc")
+
+
+# ╔═╡ d3539870-311a-4dfd-aae5-8dd2661e00dd
+geoger = GeoJSON.read(read(Downloads.download("https://raw.githubusercontent.com/isellsoap/deutschlandGeoJSON/main/4_kreise/3_mittel.geo.json"), String))
 
 # ╔═╡ 6ef552a0-4d86-479e-a60f-2ed5d63d8bfd
 begin
-	geoger = GeoJSON.read(read(Downloads.download("https://raw.githubusercontent.com/isellsoap/deutschlandGeoJSON/main/4_kreise/3_mittel.geo.json"), String))
+	fig = Figure()
+	ga = GeoAxis(fig[1, 1]; dest = "+proj=merc")
+
+	# Draw Landkreis shape
 	poly!(ga, geoger; strokewidth = 0.7, color=:transparent, rasterize = 5,  xautolimits=false, yautolimits=false)
-end
 
-# ╔═╡ e666be3a-079e-4716-a59e-47981c209785
-for label in labels(track_graph)
-	vertex = track_graph[label]
-	scatter!(ga, vertex, markersize = 20, color = :black)
-end
-
-# ╔═╡ 75decfcd-0e09-4405-b083-5acf2bc4a649
-for (vertex1, vertex2) in edge_labels(track_graph)
-	lines!(ga, [track_graph[vertex1], track_graph[vertex2]], color=:black)
+	# Draw edges
+	for (vertex1, vertex2) in edge_labels(track_graph)
+	lines!(ga, [track_graph[vertex1], track_graph[vertex2]], color=:red)
 	# bracket!([(track_graph[vertex1], track_graph[vertex2])], text="1", color=:transparent, width=0)
-end
+	end
 
-# ╔═╡ d71f559d-fe5b-4ffb-9b01-2a2a7dc5e5d6
-fig
+	# Draw vertices
+	for label in labels(track_graph)
+		vertex = track_graph[label]
+		scatter!(ga, vertex, markersize = 20, color = :black)
+	end
+
+	fig;
+end
 
 # ╔═╡ af77e83b-2ad5-4707-968b-79bdd15f0fb3
 warning(text) = Markdown.MD(Markdown.Admonition("warning", "Warning!", [text]));
@@ -260,15 +258,13 @@ danger(text) = Markdown.MD(Markdown.Admonition("danger", "Danger!", [text]));
 # ╔═╡ a702c503-b775-4548-ba2d-c5610fd40ead
 correct(text) = Markdown.MD(Markdown.Admonition("correct", "All fine", [text]));
 
-# ╔═╡ f6b5808a-69ee-46ab-9544-495ec4483224
-begin
-	if is_connected(track_graph) && !has_self_loops(track_graph)
+# ╔═╡ a94e3463-acf3-4dbf-8e87-60ce4998bf35
+if is_connected(track_graph) && !has_self_loops(track_graph)
 		correct(md"Graph is fully connected and has no loops")
-	elseif is_connected(track_graph) && has_self_loops(track_graph)
-		warning(md"Graph is fully connected, but has loops. Check if data is correct.")
-	else
-		danger(md"Graph is not fully connected. Theres something missing!")
-	end
+elseif is_connected(track_graph) && has_self_loops(track_graph)
+	warning(md"Graph is fully connected, but has loops. Check if data is correct.")
+else
+	danger(md"Graph is not fully connected. Theres something missing!")
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -2156,21 +2152,17 @@ version = "3.5.0+0"
 # ╟─33fb8544-39db-43c4-962a-ac94c63c6dfa
 # ╠═a1c68695-0feb-45b3-9982-239ad1139d70
 # ╠═65fc3ed7-969e-472c-a60d-04705cacee6b
+# ╟─a94e3463-acf3-4dbf-8e87-60ce4998bf35
 # ╠═721272b3-b6f7-4262-ae68-d4cec9142b84
-# ╠═e0ff40d2-1f03-47b1-a52e-1cbd638e9053
-# ╟─f6b5808a-69ee-46ab-9544-495ec4483224
 # ╟─c493a46a-bc1b-4984-8692-aa13b0f4db3c
 # ╠═ac38c36f-cfcb-4cda-9c4e-f772ea64d068
 # ╠═a6766869-41e3-459e-b9b0-e3f3312e84f2
 # ╠═fcbe51d5-9edc-4f96-8013-a666aaa47105
 # ╠═603538b6-119d-4ea3-949e-1bb5a9cc965a
 # ╠═6b6b438c-a416-418f-974d-a7e6bc8b9d13
-# ╠═f2a9882e-89e9-49c5-acc4-b483c554b53a
 # ╠═54835698-c768-4347-a6ce-1d1e72725d5b
+# ╠═d3539870-311a-4dfd-aae5-8dd2661e00dd
 # ╠═6ef552a0-4d86-479e-a60f-2ed5d63d8bfd
-# ╠═e666be3a-079e-4716-a59e-47981c209785
-# ╠═75decfcd-0e09-4405-b083-5acf2bc4a649
-# ╠═d71f559d-fe5b-4ffb-9b01-2a2a7dc5e5d6
 # ╟─af77e83b-2ad5-4707-968b-79bdd15f0fb3
 # ╟─9eb627d9-e6f1-46ec-a846-f1b5d6633789
 # ╟─a702c503-b775-4548-ba2d-c5610fd40ead
