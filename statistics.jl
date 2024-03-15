@@ -4,290 +4,168 @@
 using Markdown
 using InteractiveUtils
 
-# This Pluto notebook uses @bind for interactivity. When running this notebook outside of Pluto, the following 'mock version' of @bind gives bound variables a default value (instead of an error).
-macro bind(def, element)
-    quote
-        local iv = try Base.loaded_modules[Base.PkgId(Base.UUID("6e696c72-6542-2067-7265-42206c756150"), "AbstractPlutoDingetjes")].Bonds.initial_value catch; b -> missing; end
-        local el = $(esc(element))
-        global $(esc(def)) = Core.applicable(Base.get, el) ? Base.get(el) : iv(el)
-        el
-    end
-end
-
-# ╔═╡ 14690899-87ee-4be0-83cb-8b2bbbbbfc88
-using PlutoUI
-
-# ╔═╡ e0d70b88-b6ae-4c39-b7cc-c4a5455f0434
-using JSON
-
-# ╔═╡ a1c68695-0feb-45b3-9982-239ad1139d70
-using Graphs, GeometryBasics, MetaGraphsNext, IterTools
-
-# ╔═╡ ac38c36f-cfcb-4cda-9c4e-f772ea64d068
-using GeoMakie, CairoMakie, GeoJSON, Downloads, Geodesy
-
-# ╔═╡ d6b10428-e2a9-4e99-a2f7-0e979862324e
+# ╔═╡ 50636f78-d623-43b2-a24d-7f3318b596a9
 begin
-	TableOfContents(title="📚 Table of Contents")
-	md"## Preferences"
+	using HTTP, Memoize, JSON
+	include("overpass.jl");
 end
 
-# ╔═╡ f94dc17b-6db0-471a-a4c1-2fee752dad6d
-md"Relation ID:"
+# ╔═╡ 33988db9-0a08-49ec-aee4-1870255dfb9a
+using CairoMakie
 
-# ╔═╡ 6e58c768-93ab-4481-851f-23041b92157b
-@bind relationID TextField(default="76902")
+# ╔═╡ f1edb8df-d81b-48ce-a517-041a7dacafa9
+radius_cnt = get_json_from_overpass!("""
+[out:json];
+(
+  node["railway:radius"];
+  way["railway:radius"];
+  relation["railway:radius"];
+);
+out count;
 
-# ╔═╡ 356b5371-d26b-4ec0-8c8d-0c8f34294d87
-md"### Way IDs
-Comma separated"
+area["ISO3166-1"="DE"]->.germany;
+(
+  node(area.germany)["railway:radius"];
+  way(area.germany)["railway:radius"];
+  relation(area.germany)["railway:radius"];
+);
+out count;
 
-# ╔═╡ 4925dfd3-c0bc-4ac3-8434-e9963bbabb6c
-@bind wayID TextField(default="25258796")
+(
+  node["railway"]["incline"];
+  way["railway"]["incline"];
+  relation["railway"]["incline"];
+);
+out count;
 
-# ╔═╡ eecebb31-950a-444f-b29a-15dbea02f445
-md"## Download data
-Request Data via Overpass API from OpenStreetMap and save it to JSON file
-"
+area["ISO3166-1"="DE"]->.germany;
+(
+  node(area.germany)["railway"]["incline"];
+  way(area.germany)["railway"]["incline"];
+  relation(area.germany)["railway"]["incline"];
+);
+out count;
 
-# ╔═╡ 00c286ca-93ab-4286-b20c-423b42e2d761
-# ╠═╡ disabled = true
-#=╠═╡
-overpass_string = "
-[out:json][timeout:25];
-relation("*string(relationID)*");
-(._;>>;);
-out;";
-  ╠═╡ =#
+""")
 
-# ╔═╡ 0220c270-5c47-4d65-9583-91e54b51e978
-overpass_string = "[out:json][timeout:25];
-way(id:$wayID);
-way(bn);
-(._;>>;);
-out;";
-
-# ╔═╡ 18382d5a-5621-4447-8fa0-a6c2ae09af1d
+# ╔═╡ ea28b2a0-14c1-4fe9-9d9c-8cd5643efadb
 begin
-	using HTTP
-	overpass_response_file = "./$wayID.overpass.json"
-	# overpass_endpoint = "https://overpass-api.de/api/interpreter"
-	overpass_endpoint = "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
-	
-	# TODO check how old the file is
-	if !isfile(overpass_response_file)
-		response = String(HTTP.post(overpass_endpoint,body=overpass_string).body)	
-		write(overpass_response_file, response)
-	end
-end
-
-# ╔═╡ cc0da147-448d-41f3-bc07-1c19d538efc7
-md"## Process data
-Reads JSON file and prepares data"
-
-# ╔═╡ faa14405-83f4-4609-b4ad-a8cfaebb3526
-overpass_data = JSON.parsefile(overpass_response_file);
-
-# ╔═╡ 13c225c6-e384-40ce-80c3-bdc60bac9846
-overpass_nodes = filter(n -> n["type"] == "node", overpass_data["elements"]);
-
-# ╔═╡ 239b9c20-fc29-482a-8a48-f7ae9264ab28
-nodes = Dict(node["id"] => node for node in overpass_nodes);
-
-# ╔═╡ d9de89fd-333b-43d9-988f-ee23a57f7069
-# ╠═╡ disabled = true
-#=╠═╡
-begin
-	unique_way_nodes = Dict()
-	for node in overpass_nodes
-		nodes[node["id"]] = node
-		# if haskey(node, "tags")
-		# 	for t in node["tags"]
-		# 		println(t)
-		# 	end
-		# 	if ("railway" => "switch") in node["tags"]
-		# 		println("Its a switch")
-		# 	elseif ("railway" => "signal") in node["tags"]
-		# 		println("Its a signal")
-		# 	else
-		# 		for tag in node["tags"]
-		# 			if tag.first == "railway:switch"
-		# 				println("Its a switch")
-		# 				break
-		# 			# else
-		# 			# 	println(tag, " ")
-		# 			end
-		# 		end	
-		# 	end
-		# end
-		# println()
-	end
-end
-  ╠═╡ =#
-
-# ╔═╡ 68f6b5a7-caf1-496b-8b92-5230aa91f156
-overpass_ways = filter(n -> n["type"] == "way", overpass_data["elements"]);
-
-# ╔═╡ 33fb8544-39db-43c4-962a-ac94c63c6dfa
-md"## Create Graph"
-
-# ╔═╡ 721272b3-b6f7-4262-ae68-d4cec9142b84
-function add_vertex_to_track_graph(graph, node_id) 
-	graph[node_id] = Point(nodes[node_id]["lon"], nodes[node_id]["lat"])
-end;
-
-# ╔═╡ 65fc3ed7-969e-472c-a60d-04705cacee6b
-begin
-	track_graph = MetaGraph(
-		DiGraph(),
-		label_type=Int, # OSM Id
-		vertex_data_type=Point,
-		edge_data_type=Dict
-	);
-	
-	for way in overpass_ways
-		# Add first vertex, because it's skipped in the loop
-		add_vertex_to_track_graph(track_graph, first(way["nodes"]))
-	
-		for (prev_node_id, node_id) in partition(way["nodes"], 2, 1)
-			# Add Vertex to graph
-			add_vertex_to_track_graph(track_graph, node_id)
-			
-			# Add Edge
-			track_graph[prev_node_id, node_id] = Dict()
-		end
-	end
-end
-
-# ╔═╡ c493a46a-bc1b-4984-8692-aa13b0f4db3c
-md"## Draw tracks"
-
-# ╔═╡ a6766869-41e3-459e-b9b0-e3f3312e84f2
-CairoMakie.activate!(type = "svg")
-
-# ╔═╡ fcbe51d5-9edc-4f96-8013-a666aaa47105
-# Bugfix, see https://github.com/MakieOrg/GeoMakie.jl/issues/201
-Makie.point_iterator(::Makie.MakieCore.Text{Tuple{Vector{Makie.GlyphCollection}}}) = Point2f[]
-
-# ╔═╡ 6b6b438c-a416-418f-974d-a7e6bc8b9d13
-function calculate_radius(coord1, coord2, coord3)
-	# Convert coordinates to Geodesy points
-	point1 = Geodesy.LatLon(coord1[1], coord1[2])
-	point2 = Geodesy.LatLon(coord2[1], coord2[2])
-	point3 = Geodesy.LatLon(coord3[1], coord3[2])
-	
-	# Calculate the distances between the points
-	d12 = euclidean_distance(point1, point2)
-	d23 = euclidean_distance(point2, point3)
-	d31 = euclidean_distance(point3, point1)
-	
-	# Calculate the semiperimeter of the triangle
-	s = (d12 + d23 + d31) / 2
-	
-	# Calculate the radius using Heron's formula
-	area = sqrt(s * (s - d12) * (s - d23) * (s - d31))
-	radius = (d12 * d23 * d31) / (4 * area)
-	
-	return radius
-end
-
-# ╔═╡ 603538b6-119d-4ea3-949e-1bb5a9cc965a
-begin
-	radii = Float64[]
-	for label in labels(track_graph)
-		outneighbor_label = outneighbor_labels(track_graph, label)
-		inneighbor_label = inneighbor_labels(track_graph, label)
-		vertex = track_graph[label]
+	radius_cnt_data_str = [
+		radius_cnt[1]["tags"]["nodes"],
+		radius_cnt[1]["tags"]["ways"],
+		radius_cnt[1]["tags"]["areas"],
 		
-		if length(outneighbor_label) == 1 && length(inneighbor_label) == 1
-			before_node = track_graph[first(outneighbor_label)]
-			after_node = track_graph[first(inneighbor_label)]
+		radius_cnt[2]["tags"]["nodes"],
+		radius_cnt[2]["tags"]["ways"],
+		radius_cnt[2]["tags"]["areas"],
+
+		radius_cnt[3]["tags"]["nodes"],
+		radius_cnt[3]["tags"]["ways"],
+		radius_cnt[3]["tags"]["areas"],
+
+		radius_cnt[4]["tags"]["nodes"],
+		radius_cnt[4]["tags"]["ways"],
+		radius_cnt[4]["tags"]["areas"],
+	]
+	radius_cnt_data = map(x->parse(Int64,x),radius_cnt_data_str)
+end
+
+# ╔═╡ cedd6f5a-393a-4294-bd88-4b697b0a10d5
+radius_cnt_group = [1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2]
+
+# ╔═╡ 6799b840-f7fa-4537-b39d-fc0fb65b35ca
+begin
+	colors = (
+		node = :yellow,
+		way = :black,
+		area = :red
+	)
+
+	color = []
+	for i in 1:length(radius_cnt_data)/3
+		push!(color, colors.node)
+		push!(color, colors.way)
+		push!(color, colors.area)
+	end
 	
-			# Radii > 700 m keinen Einfluss mehr
-			radius = calculate_radius(before_node, vertex, after_node)
-			
-			# # Maximum Radius is 2500m in DB Germany
-			if radius > 3000
-				radius = NaN
-			end
-		else
-			radius = NaN
-		end
-		push!(radii, radius)
+	barplot(radius_cnt_group, radius_cnt_data,
+        stack = [1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3],
+        color = color,
+		dodge = [1, 1, 1, 2, 2, 2, 1, 1, 1, 2, 2, 2],
+        axis = (xticks = (1:2, ["railway:radius", "incline"]),
+                title = "Stacked bars"),
+	)
+end
+
+# ╔═╡ 0478f4a8-6daf-4bef-8cf4-c4af77ab6443
+begin
+	radius_nosignal_cnt = get_json_from_overpass!("""
+	[out:json];
+	(
+	  node["railway:radius"]["!railway:switch"];
+	  way["railway:radius"]["!railway:switch"];
+	  relation["railway:radius"]["!railway:switch"];
+	);
+	out count;""");
+	
+	if parse(Int64,radius_nosignal_cnt[1]["tags"]["total"]) == 0
+		md"Alle railway:radius sind mit Weichen getaggt"
+	else
+		md"Nicht mehr alle railway:radius sind auch als Weiche getaggt"
 	end
 end
 
-# ╔═╡ d3539870-311a-4dfd-aae5-8dd2661e00dd
-geoger = GeoJSON.read(read(Downloads.download("https://raw.githubusercontent.com/isellsoap/deutschlandGeoJSON/main/4_kreise/3_mittel.geo.json"), String))
+# ╔═╡ 49e5a875-8dde-4cc5-b770-651c05d1ab9a
+# ╠═╡ disabled = true
+#=╠═╡
+using OSMMakie
+  ╠═╡ =#
 
-# ╔═╡ 5f10d889-6285-4de6-a242-fa6c1ab7c9f9
+# ╔═╡ 9150fe63-3aa7-4a0c-bc38-06e9c2ea785e
+# ╠═╡ disabled = true
+#=╠═╡
 begin
-	edge_points = [track_graph[first(edge_labels(track_graph))[1]]]
-	for (_, label2) in edge_labels(track_graph)
-		push!(edge_points, track_graph[label2])
-	end
-end
 
-# ╔═╡ b380cdbd-3b18-43f1-ab66-34781faacc4c
-begin
-	vertex_points = GeometryBasics.Point2{Float64}[]
-	for label in labels(track_graph)
-		push!(vertex_points, track_graph[label])
-	end
-end
+	area = (
+	    minlat = 51.5015, minlon = -0.0921, # bottom left corner
+	    maxlat = 51.5154, maxlon = -0.0662 # top right corner
+	)
 
-# ╔═╡ 6ef552a0-4d86-479e-a60f-2ed5d63d8bfd
-begin
-	fig = Figure()
-	ga = GeoAxis(fig[1, 1]; dest = "+proj=merc")
-
-	# Draw Landkreis shape
-	poly!(ga, geoger; strokewidth = 0.7, color=:transparent, rasterize=5,  xautolimits=false, yautolimits=false)
 	
-	# Draw edges
-	lines!(ga, edge_points, color=:black)
+	# load as OSMGraph
+	osm = OSMMakie.graph_from_file("25258796.overpass.json";
+	    graph_type = :light, # SimpleDiGraph
+	    weight_type = :distance
+	)
 	
-	# Draw vertices
-	scatter!(ga, vertex_points, color=radii, markersize=20, nan_color=:snow3)
+	# use min and max latitude to calculate approximate aspect ratio for map projection
+	autolimitaspect = map_aspect(area.minlat, area.maxlat)
 	
-	# bracket!([(track_graph[vertex1], track_graph[vertex2])], text="1", color=:transparent, width=0)
-	
-	fig;
+	# plot it
+	fig, ax, plot = osmplot(osm; axis = (; autolimitaspect), inspect_nodes = true)
+	# ax.aspect = DataAspect()
+	# DataInspector(fig)
+
+	fig
 end
+  ╠═╡ =#
 
-# ╔═╡ af77e83b-2ad5-4707-968b-79bdd15f0fb3
-warning(text) = Markdown.MD(Markdown.Admonition("warning", "Warning!", [text]));
+# ╔═╡ 4aa2d32e-27bf-45a4-9734-b063ba75044b
 
-# ╔═╡ 9eb627d9-e6f1-46ec-a846-f1b5d6633789
-danger(text) = Markdown.MD(Markdown.Admonition("danger", "Danger!", [text]));
-
-# ╔═╡ a702c503-b775-4548-ba2d-c5610fd40ead
-correct(text) = Markdown.MD(Markdown.Admonition("correct", "All fine", [text]));
-
-# ╔═╡ a94e3463-acf3-4dbf-8e87-60ce4998bf35
-if is_connected(track_graph) && !has_self_loops(track_graph)
-		correct(md"Graph is fully connected and has no loops")
-elseif is_connected(track_graph) && has_self_loops(track_graph)
-	warning(md"Graph is fully connected, but has loops. Check if data is correct.")
-else
-	danger(md"Graph is not fully connected. Theres something missing!")
-end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
-Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
-GeoJSON = "61d90e0f-e114-555e-ac52-39dfb47a3ef9"
-GeoMakie = "db073c08-6b98-4ee5-b6a4-5efafb3259c6"
-Geodesy = "0ef565a4-170c-5f04-8de2-149903a85f3d"
-GeometryBasics = "5c1252a2-5f33-56bf-86c9-59e7332b4326"
-Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
-IterTools = "c8e1da08-722c-5040-9ed9-7db0dc04731e"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
-MetaGraphsNext = "fa8bd995-216d-47f1-8a91-f3b68fbeb377"
-PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
+Memoize = "c03570c3-d221-55d1-a50c-7939bbd78826"
+
+[compat]
+CairoMakie = "~0.11.9"
+HTTP = "~1.10.3"
+JSON = "~0.21.4"
+Memoize = "~0.4.4"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
@@ -296,7 +174,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.10.2"
 manifest_format = "2.0"
-project_hash = "1f5e48af2cd242c70f3d708d54ae4663097a2c82"
+project_hash = "c0e3f3a2a099ad8c0cc79a0ca827c1386ef7726e"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -314,12 +192,6 @@ git-tree-sha1 = "222ee9e50b98f51b5d78feb93dd928880df35f06"
 uuid = "398f06c4-4d28-53ec-89ca-5b2656b7603d"
 version = "0.3.0"
 
-[[deps.AbstractPlutoDingetjes]]
-deps = ["Pkg"]
-git-tree-sha1 = "0f748c81756f2e5e6854298f11ad8b2dfae6911a"
-uuid = "6e696c72-6542-2067-7265-42206c756150"
-version = "1.3.0"
-
 [[deps.AbstractTrees]]
 git-tree-sha1 = "2d9c9a55f9c93e8887ad391fbae72f8ef55e1177"
 uuid = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
@@ -327,9 +199,9 @@ version = "0.4.5"
 
 [[deps.Adapt]]
 deps = ["LinearAlgebra", "Requires"]
-git-tree-sha1 = "cde29ddf7e5726c9fb511f340244ea3481267608"
+git-tree-sha1 = "cea4ac3f5b4bc4b3000aa55afb6e5626518948fa"
 uuid = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
-version = "3.7.2"
+version = "4.0.3"
 weakdeps = ["StaticArrays"]
 
     [deps.Adapt.extensions]
@@ -345,23 +217,19 @@ version = "0.4.1"
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
 version = "1.1.1"
 
-[[deps.ArnoldiMethod]]
-deps = ["LinearAlgebra", "Random", "StaticArrays"]
-git-tree-sha1 = "62e51b39331de8911e4a7ff6f5aaf38a5f4cc0ae"
-uuid = "ec485272-7323-5ecc-a04f-4719b315124d"
-version = "0.2.0"
-
 [[deps.ArrayInterface]]
-deps = ["Adapt", "LinearAlgebra", "Requires", "SparseArrays", "SuiteSparse"]
-git-tree-sha1 = "16267cf279190ca7c1b30d020758ced95db89cd0"
+deps = ["Adapt", "LinearAlgebra", "SparseArrays", "SuiteSparse"]
+git-tree-sha1 = "44691067188f6bd1b2289552a23e4b7572f4528d"
 uuid = "4fba245c-0d91-5ea0-9b3e-6abc04ee57a9"
-version = "7.5.1"
+version = "7.9.0"
 
     [deps.ArrayInterface.extensions]
     ArrayInterfaceBandedMatricesExt = "BandedMatrices"
     ArrayInterfaceBlockBandedMatricesExt = "BlockBandedMatrices"
     ArrayInterfaceCUDAExt = "CUDA"
+    ArrayInterfaceChainRulesExt = "ChainRules"
     ArrayInterfaceGPUArraysCoreExt = "GPUArraysCore"
+    ArrayInterfaceReverseDiffExt = "ReverseDiff"
     ArrayInterfaceStaticArraysCoreExt = "StaticArraysCore"
     ArrayInterfaceTrackerExt = "Tracker"
 
@@ -369,7 +237,9 @@ version = "7.5.1"
     BandedMatrices = "aae01518-5342-5314-be14-df237901396f"
     BlockBandedMatrices = "ffab5731-97b5-5995-9138-79e8c1846df0"
     CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+    ChainRules = "082447d4-558c-5d27-93f4-14fc19e9eca2"
     GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
+    ReverseDiff = "37e2e3b7-166d-5795-8a7a-e32c996b4267"
     StaticArraysCore = "1e83bf80-4336-4d27-bf5d-d5a4f845583c"
     Tracker = "9f7883ad-71c0-57eb-9f7f-b5c9e6d3789c"
 
@@ -415,18 +285,12 @@ uuid = "6e34b625-4abd-537c-b88f-471c36dfa7a0"
 version = "1.0.8+1"
 
 [[deps.CEnum]]
-git-tree-sha1 = "eb4cb44a499229b3b8426dcfb5dd85333951ff90"
+git-tree-sha1 = "389ad5c84de1ae7cf0e28e381131c98ea87d54fc"
 uuid = "fa961155-64e5-5f13-b03f-caf6b980ea82"
-version = "0.4.2"
+version = "0.5.0"
 
 [[deps.CRC32c]]
 uuid = "8bf52ea8-c179-5cab-976a-9e18b702a9bc"
-
-[[deps.CRlibm]]
-deps = ["CRlibm_jll"]
-git-tree-sha1 = "32abd86e3c2025db5172aa182b982debed519834"
-uuid = "96374032-68de-5a5b-8d9e-752f78720389"
-version = "1.0.1"
 
 [[deps.CRlibm_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -542,9 +406,9 @@ version = "1.1.0+0"
 
 [[deps.ConcurrentUtilities]]
 deps = ["Serialization", "Sockets"]
-git-tree-sha1 = "87944e19ea747808b73178ce5ebb74081fdf2d35"
+git-tree-sha1 = "6cbbd4d241d7e6579ab354737f4dd95ca43946e1"
 uuid = "f0e56b4a-5159-44fe-b623-3e5288b988bb"
-version = "2.4.0"
+version = "2.4.1"
 
 [[deps.ConstructionBase]]
 deps = ["LinearAlgebra"]
@@ -561,12 +425,6 @@ weakdeps = ["IntervalSets", "StaticArrays"]
 git-tree-sha1 = "d05d9e7b7aedff4e5b51a029dced05cfb6125781"
 uuid = "d38c429a-6771-53c6-b99e-75d170b6e991"
 version = "0.6.2"
-
-[[deps.CoordinateTransformations]]
-deps = ["LinearAlgebra", "StaticArrays"]
-git-tree-sha1 = "f9d7112bfff8a19a3a4ea4e03a8e6a91fe8456bf"
-uuid = "150eb455-5306-5404-9cee-2592286d6298"
-version = "0.6.3"
 
 [[deps.DataAPI]]
 git-tree-sha1 = "abe83f3a2f1b857aac70ef8b269080af17764bbe"
@@ -654,11 +512,6 @@ git-tree-sha1 = "bdb1942cd4c45e3c678fd11569d5cccd80976237"
 uuid = "4e289a0a-7415-4d19-859d-a7e5c4648b56"
 version = "1.0.4"
 
-[[deps.ErrorfreeArithmetic]]
-git-tree-sha1 = "d6863c556f1142a061532e79f611aa46be201686"
-uuid = "90fa49ef-747e-5e6f-a989-263ba693cf1a"
-version = "0.5.2"
-
 [[deps.ExactPredicates]]
 deps = ["IntervalArithmetic", "Random", "StaticArrays"]
 git-tree-sha1 = "b3f2ff58735b5f024c392fde763f29b057e4b025"
@@ -700,12 +553,6 @@ git-tree-sha1 = "c6033cc3892d0ef5bb9cd29b7f2f0331ea5184ea"
 uuid = "f5851436-0d7a-5f13-b9de-f02708fd171a"
 version = "3.3.10+0"
 
-[[deps.FastRounding]]
-deps = ["ErrorfreeArithmetic", "LinearAlgebra"]
-git-tree-sha1 = "6344aa18f654196be82e62816935225b3b9abe44"
-uuid = "fa42c844-2597-5d31-933b-ebd51ab2693f"
-version = "0.3.1"
-
 [[deps.FileIO]]
 deps = ["Pkg", "Requires", "UUIDs"]
 git-tree-sha1 = "c5c28c245101bd59154f649e19b038d15901b5dc"
@@ -741,9 +588,9 @@ weakdeps = ["PDMats", "SparseArrays", "Statistics"]
 
 [[deps.FiniteDiff]]
 deps = ["ArrayInterface", "LinearAlgebra", "Requires", "Setfield", "SparseArrays"]
-git-tree-sha1 = "73d1214fec245096717847c62d389a5d2ac86504"
+git-tree-sha1 = "bc0c5092d6caaea112d3c8e3b238d61563c58d5f"
 uuid = "6a86dc24-6348-571c-b903-95158fe2bd41"
-version = "2.22.0"
+version = "2.23.0"
 
     [deps.FiniteDiff.extensions]
     FiniteDiffBandedMatricesExt = "BandedMatrices"
@@ -810,40 +657,11 @@ version = "1.0.10+0"
 deps = ["Random"]
 uuid = "9fa8497b-333b-5362-9e8d-4d0656e87820"
 
-[[deps.GeoFormatTypes]]
-git-tree-sha1 = "59107c179a586f0fe667024c5eb7033e81333271"
-uuid = "68eda718-8dee-11e9-39e7-89f7f65f511f"
-version = "0.4.2"
-
 [[deps.GeoInterface]]
 deps = ["Extents"]
 git-tree-sha1 = "d4f85701f569584f2cff7ba67a137d03f0cfb7d0"
 uuid = "cf35fbd7-0cd7-5166-be24-54bfbe79505f"
 version = "1.3.3"
-
-[[deps.GeoInterfaceRecipes]]
-deps = ["GeoInterface", "RecipesBase"]
-git-tree-sha1 = "fb1156076f24f1dfee45b3feadb31d05730a49ac"
-uuid = "0329782f-3d07-4b52-b9f6-d3137cf03c7a"
-version = "1.0.2"
-
-[[deps.GeoJSON]]
-deps = ["Extents", "GeoFormatTypes", "GeoInterface", "GeoInterfaceRecipes", "JSON3", "StructTypes", "Tables"]
-git-tree-sha1 = "29bb9a35cac72ccbeb92e37dbfb2feedd5b5aecd"
-uuid = "61d90e0f-e114-555e-ac52-39dfb47a3ef9"
-version = "0.7.3"
-
-[[deps.GeoMakie]]
-deps = ["Colors", "Downloads", "GeoInterface", "GeoJSON", "Geodesy", "GeometryBasics", "ImageIO", "LinearAlgebra", "Makie", "Proj", "Reexport", "Statistics", "StructArrays"]
-git-tree-sha1 = "1c302958cfaeeefcb5e2e498a0355a37ca0114b8"
-uuid = "db073c08-6b98-4ee5-b6a4-5efafb3259c6"
-version = "0.6.2"
-
-[[deps.Geodesy]]
-deps = ["CoordinateTransformations", "Dates", "LinearAlgebra", "StaticArrays"]
-git-tree-sha1 = "ed98a4429bf0a033ccc5e036120181dd52f06d31"
-uuid = "0ef565a4-170c-5f04-8de2-149903a85f3d"
-version = "1.1.0"
 
 [[deps.GeometryBasics]]
 deps = ["EarCut_jll", "Extents", "GeoInterface", "IterTools", "LinearAlgebra", "StaticArrays", "StructArrays", "Tables"]
@@ -875,12 +693,6 @@ git-tree-sha1 = "344bf40dcab1073aca04aa0df4fb092f920e4011"
 uuid = "3b182d85-2403-5c21-9c21-1e1f0cc25472"
 version = "1.3.14+0"
 
-[[deps.Graphs]]
-deps = ["ArnoldiMethod", "Compat", "DataStructures", "Distributed", "Inflate", "LinearAlgebra", "Random", "SharedArrays", "SimpleTraits", "SparseArrays", "Statistics"]
-git-tree-sha1 = "899050ace26649433ef1af25bc17a815b3db52b7"
-uuid = "86223c79-3864-5bf0-83f7-82e725a168b6"
-version = "1.9.0"
-
 [[deps.GridLayoutBase]]
 deps = ["GeometryBasics", "InteractiveUtils", "Observables"]
 git-tree-sha1 = "af13a277efd8a6e716d79ef635d5342ccb75be61"
@@ -909,24 +721,6 @@ deps = ["DualNumbers", "LinearAlgebra", "OpenLibm_jll", "SpecialFunctions"]
 git-tree-sha1 = "f218fe3736ddf977e0e772bc9a586b2383da2685"
 uuid = "34004b35-14d8-5ef3-9330-4cdb6864b03a"
 version = "0.3.23"
-
-[[deps.Hyperscript]]
-deps = ["Test"]
-git-tree-sha1 = "179267cfa5e712760cd43dcae385d7ea90cc25a4"
-uuid = "47d2ed2b-36de-50cf-bf87-49c2cf4b8b91"
-version = "0.0.5"
-
-[[deps.HypertextLiteral]]
-deps = ["Tricks"]
-git-tree-sha1 = "7134810b1afce04bbc1045ca1985fbe81ce17653"
-uuid = "ac1192a8-f4b3-4bfe-ba22-af5b92cd3ab2"
-version = "0.9.5"
-
-[[deps.IOCapture]]
-deps = ["Logging", "Random"]
-git-tree-sha1 = "8b72179abc660bfab5e28472e019392b97d0985c"
-uuid = "b5f81e59-6552-4d32-b1f0-c071b021bf89"
-version = "0.2.4"
 
 [[deps.ImageAxes]]
 deps = ["AxisArrays", "ImageBase", "ImageCore", "Reexport", "SimpleTraits"]
@@ -1002,10 +796,16 @@ version = "0.15.1"
     Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [[deps.IntervalArithmetic]]
-deps = ["CRlibm", "EnumX", "FastRounding", "LinearAlgebra", "Markdown", "Random", "RecipesBase", "RoundingEmulator", "SetRounding", "StaticArrays"]
-git-tree-sha1 = "f59e639916283c1d2e106d2b00910b50f4dab76c"
+deps = ["CRlibm_jll", "RoundingEmulator"]
+git-tree-sha1 = "2d6d22fe481eff6e337808cc0880c567d7324f9a"
 uuid = "d1acc4aa-44c8-5952-acd4-ba5d80a2a253"
-version = "0.21.2"
+version = "0.22.8"
+weakdeps = ["DiffRules", "ForwardDiff", "RecipesBase"]
+
+    [deps.IntervalArithmetic.extensions]
+    IntervalArithmeticDiffRulesExt = "DiffRules"
+    IntervalArithmeticForwardDiffExt = "ForwardDiff"
+    IntervalArithmeticRecipesBaseExt = "RecipesBase"
 
 [[deps.IntervalSets]]
 git-tree-sha1 = "dba9ddf07f77f60450fe5d2e2beb9854d9a49bd0"
@@ -1039,12 +839,6 @@ git-tree-sha1 = "a3f24677c21f5bbe9d2a714f95dcd58337fb2856"
 uuid = "82899510-4779-5014-852e-03e436cf321d"
 version = "1.0.0"
 
-[[deps.JLD2]]
-deps = ["FileIO", "MacroTools", "Mmap", "OrderedCollections", "Pkg", "PrecompileTools", "Printf", "Reexport", "Requires", "TranscodingStreams", "UUIDs"]
-git-tree-sha1 = "5ea6acdd53a51d897672edb694e3cc2912f3f8a7"
-uuid = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
-version = "0.4.46"
-
 [[deps.JLLWrappers]]
 deps = ["Artifacts", "Preferences"]
 git-tree-sha1 = "7e5d6779a1e09a36db2a7b6cff50942a0a7d0fca"
@@ -1056,18 +850,6 @@ deps = ["Dates", "Mmap", "Parsers", "Unicode"]
 git-tree-sha1 = "31e996f0a15c7b280ba9f76636b3ff9e2ae58c9a"
 uuid = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 version = "0.21.4"
-
-[[deps.JSON3]]
-deps = ["Dates", "Mmap", "Parsers", "PrecompileTools", "StructTypes", "UUIDs"]
-git-tree-sha1 = "eb3edce0ed4fa32f75a0a11217433c31d56bd48b"
-uuid = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
-version = "1.14.0"
-
-    [deps.JSON3.extensions]
-    JSON3ArrowExt = ["ArrowTypes"]
-
-    [deps.JSON3.weakdeps]
-    ArrowTypes = "31f734f8-188a-4ce0-8406-c8a06bd891cd"
 
 [[deps.JpegTurbo]]
 deps = ["CEnum", "FileIO", "ImageCore", "JpegTurbo_jll", "TOML"]
@@ -1092,12 +874,6 @@ deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "f6250b16881adf048549549fba48b1161acdac8c"
 uuid = "c1c5ebd0-6772-5130-a774-d5fcae4a789d"
 version = "3.100.1+0"
-
-[[deps.LERC_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
-git-tree-sha1 = "bf36f528eec6634efc60d7ec062008f171071434"
-uuid = "88015f11-f218-50d7-93a8-a6af411a945d"
-version = "3.0.0+1"
 
 [[deps.LLVMOpenMP_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
@@ -1182,12 +958,6 @@ git-tree-sha1 = "dae976433497a2f841baadea93d27e68f1a12a97"
 uuid = "4b2f31a3-9ecc-558c-b454-b3730dcb73e9"
 version = "2.39.3+0"
 
-[[deps.Libtiff_jll]]
-deps = ["Artifacts", "JLLWrappers", "JpegTurbo_jll", "LERC_jll", "Libdl", "XZ_jll", "Zlib_jll", "Zstd_jll"]
-git-tree-sha1 = "6355fb9a4d22d867318db186fd09b09b35bd2ed7"
-uuid = "89763e89-9b03-5906-acba-b20f662cd828"
-version = "4.6.0+0"
-
 [[deps.Libuuid_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
 git-tree-sha1 = "0a04a1318df1bf510beb2562cf90fb0c386f58c4"
@@ -1240,11 +1010,6 @@ deps = ["Dates", "Logging"]
 git-tree-sha1 = "c1dd6d7978c12545b4179fb6153b9250c96b0075"
 uuid = "e6f89c97-d47a-5376-807f-9c37f3926c36"
 version = "1.0.3"
-
-[[deps.MIMEs]]
-git-tree-sha1 = "65f28ad4b594aebe22157d6fac869786a255b7eb"
-uuid = "6c6e2e6c-3030-632d-7369-2d6c69616d65"
-version = "0.1.4"
 
 [[deps.MKL_jll]]
 deps = ["Artifacts", "IntelOpenMP_jll", "JLLWrappers", "LazyArtifacts", "Libdl"]
@@ -1302,11 +1067,11 @@ deps = ["Artifacts", "Libdl"]
 uuid = "c8ffd9c3-330d-5841-b78e-0817d7145fa1"
 version = "2.28.2+1"
 
-[[deps.MetaGraphsNext]]
-deps = ["Graphs", "JLD2", "SimpleTraits"]
-git-tree-sha1 = "a385fe5aa1384647e55c0c8773457b71e9b08518"
-uuid = "fa8bd995-216d-47f1-8a91-f3b68fbeb377"
-version = "0.7.0"
+[[deps.Memoize]]
+deps = ["MacroTools"]
+git-tree-sha1 = "2b1dfcba103de714d31c033b5dacc2e4a12c7caa"
+uuid = "c03570c3-d221-55d1-a50c-7939bbd78826"
+version = "0.4.4"
 
 [[deps.Missings]]
 deps = ["DataAPI"]
@@ -1459,12 +1224,6 @@ git-tree-sha1 = "67186a2bc9a90f9f85ff3cc8277868961fb57cbd"
 uuid = "f57f5aa1-a3ce-4bc8-8ab9-96f992907883"
 version = "0.4.3"
 
-[[deps.PROJ_jll]]
-deps = ["Artifacts", "JLLWrappers", "LibCURL_jll", "Libdl", "Libtiff_jll", "SQLite_jll"]
-git-tree-sha1 = "f3e45027ea0f44a2725fbedfdb7ed118d5deec8d"
-uuid = "58948b4f-47e0-5654-a9ad-f609743f8632"
-version = "901.300.0+0"
-
 [[deps.Packing]]
 deps = ["GeometryBasics"]
 git-tree-sha1 = "ec3edfe723df33528e085e632414499f26650501"
@@ -1530,12 +1289,6 @@ git-tree-sha1 = "7b1a9df27f072ac4c9c7cbe5efb198489258d1f5"
 uuid = "995b91a9-d308-5afd-9ec6-746e21dbc043"
 version = "1.4.1"
 
-[[deps.PlutoUI]]
-deps = ["AbstractPlutoDingetjes", "Base64", "ColorTypes", "Dates", "FixedPointNumbers", "Hyperscript", "HypertextLiteral", "IOCapture", "InteractiveUtils", "JSON", "Logging", "MIMEs", "Markdown", "Random", "Reexport", "URIs", "UUIDs"]
-git-tree-sha1 = "71a22244e352aa8c5f0f2adde4150f62368a3f2e"
-uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
-version = "0.7.58"
-
 [[deps.PolygonOps]]
 git-tree-sha1 = "77b3d3605fc1cd0b42d95eba87dfcd2bf67d5ff6"
 uuid = "647866c9-e3ac-4575-94e7-e3d426903924"
@@ -1591,12 +1344,6 @@ deps = ["Distributed", "Printf"]
 git-tree-sha1 = "763a8ceb07833dd51bb9e3bbca372de32c0605ad"
 uuid = "92933f4c-e287-5a05-a399-4b506db050ca"
 version = "1.10.0"
-
-[[deps.Proj]]
-deps = ["CEnum", "CoordinateTransformations", "GeoFormatTypes", "GeoInterface", "NetworkOptions", "PROJ_jll"]
-git-tree-sha1 = "76ab3cbf876f3c859b6cc5817d8262809add3e13"
-uuid = "c94c279d-25a6-4763-9509-64d165bea63e"
-version = "1.7.0"
 
 [[deps.QOI]]
 deps = ["ColorTypes", "FileIO", "FixedPointNumbers"]
@@ -1683,12 +1430,6 @@ version = "0.2.1"
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 version = "0.7.0"
 
-[[deps.SQLite_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Zlib_jll"]
-git-tree-sha1 = "75e28667a36b5650b5cc4baa266c5760c3672275"
-uuid = "76ed43ae-9a5d-5a62-8c75-30186b810ce8"
-version = "3.45.0+0"
-
 [[deps.Scratch]]
 deps = ["Dates"]
 git-tree-sha1 = "3bac05bc7e74a75fd9cba4295cde4045d9fe2386"
@@ -1697,11 +1438,6 @@ version = "1.2.1"
 
 [[deps.Serialization]]
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
-
-[[deps.SetRounding]]
-git-tree-sha1 = "d7a25e439d07a17b7cdf97eecee504c50fedf5f6"
-uuid = "3cc68bcd-71a2-5612-b932-767ffbe40ab0"
-version = "0.2.1"
 
 [[deps.Setfield]]
 deps = ["ConstructionBase", "Future", "MacroTools", "StaticArraysCore"]
@@ -1873,12 +1609,6 @@ version = "0.6.18"
     SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
     StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
-[[deps.StructTypes]]
-deps = ["Dates", "UUIDs"]
-git-tree-sha1 = "ca4bccb03acf9faaf4137a9abc1881ed1841aa70"
-uuid = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
-version = "1.10.0"
-
 [[deps.SuiteSparse]]
 deps = ["Libdl", "LinearAlgebra", "Serialization", "SparseArrays"]
 uuid = "4607b0f0-06f3-5cda-b6b1-a6196a1729e9"
@@ -1935,11 +1665,6 @@ weakdeps = ["Random", "Test"]
     [deps.TranscodingStreams.extensions]
     TestExt = ["Test", "Random"]
 
-[[deps.Tricks]]
-git-tree-sha1 = "eae1bb484cd63b36999ee58be2de6c178105112f"
-uuid = "410a4b4d-49e4-4fbc-ab6d-cb71b17b3775"
-version = "0.1.8"
-
 [[deps.TriplotBase]]
 git-tree-sha1 = "4d4ed7f294cda19382ff7de4c137d24d16adc89b"
 uuid = "981d1d27-644d-49a2-9326-4793e63143c3"
@@ -1990,12 +1715,6 @@ deps = ["Artifacts", "JLLWrappers", "Libdl", "Libgcrypt_jll", "Libgpg_error_jll"
 git-tree-sha1 = "91844873c4085240b95e795f692c4cec4d805f8a"
 uuid = "aed1982a-8fda-507f-9586-7b0439959a61"
 version = "1.1.34+0"
-
-[[deps.XZ_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "31c421e5516a6248dfb22c194519e37effbf1f30"
-uuid = "ffd25f8a-64ca-5728-b0f7-c24cf3aae800"
-version = "5.6.1+0"
 
 [[deps.Xorg_libX11_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libxcb_jll", "Xorg_xtrans_jll"]
@@ -2049,12 +1768,6 @@ version = "1.5.0+0"
 deps = ["Libdl"]
 uuid = "83775a58-1f1d-513f-b197-d71354ab007a"
 version = "1.2.13+1"
-
-[[deps.Zstd_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "49ce682769cd5de6c72dcf1b94ed7790cd08974c"
-uuid = "3161d3a3-bdf6-5164-811a-617609db77b4"
-version = "1.5.5+0"
 
 [[deps.isoband_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -2127,40 +1840,15 @@ version = "3.5.0+0"
 """
 
 # ╔═╡ Cell order:
-# ╟─14690899-87ee-4be0-83cb-8b2bbbbbfc88
-# ╟─d6b10428-e2a9-4e99-a2f7-0e979862324e
-# ╟─f94dc17b-6db0-471a-a4c1-2fee752dad6d
-# ╟─6e58c768-93ab-4481-851f-23041b92157b
-# ╟─356b5371-d26b-4ec0-8c8d-0c8f34294d87
-# ╟─4925dfd3-c0bc-4ac3-8434-e9963bbabb6c
-# ╟─eecebb31-950a-444f-b29a-15dbea02f445
-# ╠═00c286ca-93ab-4286-b20c-423b42e2d761
-# ╠═0220c270-5c47-4d65-9583-91e54b51e978
-# ╠═18382d5a-5621-4447-8fa0-a6c2ae09af1d
-# ╟─cc0da147-448d-41f3-bc07-1c19d538efc7
-# ╠═e0d70b88-b6ae-4c39-b7cc-c4a5455f0434
-# ╠═faa14405-83f4-4609-b4ad-a8cfaebb3526
-# ╠═13c225c6-e384-40ce-80c3-bdc60bac9846
-# ╠═239b9c20-fc29-482a-8a48-f7ae9264ab28
-# ╟─d9de89fd-333b-43d9-988f-ee23a57f7069
-# ╠═68f6b5a7-caf1-496b-8b92-5230aa91f156
-# ╟─33fb8544-39db-43c4-962a-ac94c63c6dfa
-# ╠═a1c68695-0feb-45b3-9982-239ad1139d70
-# ╠═65fc3ed7-969e-472c-a60d-04705cacee6b
-# ╟─a94e3463-acf3-4dbf-8e87-60ce4998bf35
-# ╠═721272b3-b6f7-4262-ae68-d4cec9142b84
-# ╟─c493a46a-bc1b-4984-8692-aa13b0f4db3c
-# ╠═ac38c36f-cfcb-4cda-9c4e-f772ea64d068
-# ╠═a6766869-41e3-459e-b9b0-e3f3312e84f2
-# ╠═fcbe51d5-9edc-4f96-8013-a666aaa47105
-# ╠═603538b6-119d-4ea3-949e-1bb5a9cc965a
-# ╠═6b6b438c-a416-418f-974d-a7e6bc8b9d13
-# ╠═d3539870-311a-4dfd-aae5-8dd2661e00dd
-# ╠═5f10d889-6285-4de6-a242-fa6c1ab7c9f9
-# ╠═b380cdbd-3b18-43f1-ab66-34781faacc4c
-# ╠═6ef552a0-4d86-479e-a60f-2ed5d63d8bfd
-# ╟─af77e83b-2ad5-4707-968b-79bdd15f0fb3
-# ╟─9eb627d9-e6f1-46ec-a846-f1b5d6633789
-# ╟─a702c503-b775-4548-ba2d-c5610fd40ead
+# ╠═50636f78-d623-43b2-a24d-7f3318b596a9
+# ╠═f1edb8df-d81b-48ce-a517-041a7dacafa9
+# ╠═33988db9-0a08-49ec-aee4-1870255dfb9a
+# ╠═ea28b2a0-14c1-4fe9-9d9c-8cd5643efadb
+# ╠═cedd6f5a-393a-4294-bd88-4b697b0a10d5
+# ╟─6799b840-f7fa-4537-b39d-fc0fb65b35ca
+# ╟─0478f4a8-6daf-4bef-8cf4-c4af77ab6443
+# ╠═49e5a875-8dde-4cc5-b770-651c05d1ab9a
+# ╠═9150fe63-3aa7-4a0c-bc38-06e9c2ea785e
+# ╠═4aa2d32e-27bf-45a4-9734-b063ba75044b
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
