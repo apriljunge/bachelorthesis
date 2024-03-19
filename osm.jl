@@ -189,22 +189,6 @@ begin
 				for (prev_node_id, node_id) in partition(way["nodes"], 2, 1)
 					# Add Vertex to graph
 					add_vertex_to_track_graph(track_graph, node_id)
-	
-					if prev_node_id == 57954791
-						@info "hey $prev_node_id => $node_id"
-					end
-	
-					if node_id == 57954791
-						@info "hey2 $prev_node_id => $node_id"
-					end
-	
-					if prev_node_id == 9372349560
-						@info "hey3 $prev_node_id => $node_id"
-					end
-	
-					if node_id == 9372349560
-						@info "hey4 $prev_node_id => $node_id"
-					end
 					
 					# Add Edge
 					track_graph[prev_node_id, node_id] = Dict()
