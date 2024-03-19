@@ -145,7 +145,7 @@ function add_vertex_to_track_graph(graph, node_id)
 
 	signal = ""
 	if haskey(node, "tags") && get(node["tags"], "railway", false) == "signal"
-		@debug node["tags"]
+		# @debug node["tags"]
 		if get(node["tags"], "railway:signal:direction", false) == "backward"
 			signal = "wrong_direction"
 		elseif get(node["tags"], "railway:signal:distant:repeated", false) == "yes"
@@ -163,7 +163,7 @@ function add_vertex_to_track_graph(graph, node_id)
 		end
 	end
 	
-	poi = meta(point, signal=signal)
+	poi = meta(point, signal=signal, id=node_id)
 
 	graph[node_id] = poi
 end;
@@ -178,18 +178,37 @@ begin
 	);
 
 	for relation in overpass_relations
-		@debug relation
-		for member in relation["members"]
-			way = ways[member["ref"]]
-			# Add first vertex, because it's skipped in the loop
-			add_vertex_to_track_graph(track_graph, first(way["nodes"]))
-		
-			for (prev_node_id, node_id) in partition(way["nodes"], 2, 1)
-				# Add Vertex to graph
-				add_vertex_to_track_graph(track_graph, node_id)
-				
-				# Add Edge
-				track_graph[prev_node_id, node_id] = Dict()
+		@debug relation["members"]
+		# @debug relation
+		for member in relation["members"][1:3]
+			if member["type"] == "way"
+				way = ways[member["ref"]]
+				# Add first vertex, because it's skipped in the loop
+				add_vertex_to_track_graph(track_graph, first(way["nodes"]))
+			
+				for (prev_node_id, node_id) in partition(way["nodes"], 2, 1)
+					# Add Vertex to graph
+					add_vertex_to_track_graph(track_graph, node_id)
+	
+					if prev_node_id == 57954791
+						@info "hey $prev_node_id => $node_id"
+					end
+	
+					if node_id == 57954791
+						@info "hey2 $prev_node_id => $node_id"
+					end
+	
+					if prev_node_id == 9372349560
+						@info "hey3 $prev_node_id => $node_id"
+					end
+	
+					if node_id == 9372349560
+						@info "hey4 $prev_node_id => $node_id"
+					end
+					
+					# Add Edge
+					track_graph[prev_node_id, node_id] = Dict()
+				end
 			end
 		end
 	end
@@ -259,7 +278,7 @@ geoger = GeoJSON.read(read(Downloads.download("https://raw.githubusercontent.com
 # ╔═╡ 5f10d889-6285-4de6-a242-fa6c1ab7c9f9
 begin
 	edge_points = [track_graph[first(edge_labels(track_graph))[1]]]
-	for (_, label2) in edge_labels(track_graph)
+	for (label1, label2) in edge_labels(track_graph)
 		push!(edge_points, track_graph[label2])
 	end
 end
@@ -278,7 +297,7 @@ begin
 	ga = GeoAxis(fig[1, 1]; dest = "+proj=merc")
 
 	# Draw Landkreis shape
-	poly!(ga, geoger; strokewidth = 0.7, color=:transparent, rasterize=5,  xautolimits=false, yautolimits=false)
+	# poly!(ga, geoger; strokewidth = 0.7, color=:transparent, rasterize=5,  xautolimits=false, yautolimits=false)
 	
 	# Draw edges
 	lines!(ga, edge_points, color=:black)
@@ -297,7 +316,9 @@ begin
 	ga2 = GeoAxis(fig2[1, 1]; dest = "+proj=merc")
 	
 	# Draw edges
-	lines!(ga2, edge_points, color=:black)
+	for (p1, p2) in edge_labels(track_graph)
+		lines!(ga2, [track_graph[p1], track_graph[p2]], color=:black)
+	end
 
 	for label in labels(track_graph)
 		poi = track_graph[label]
@@ -322,7 +343,9 @@ begin
 		
 		
 		# Draw vertices
-		scatter!(ga2, poi, color=color, markersize=20)
+		# scatter!(ga2, poi, color=color, markersize=1)
+
+		# text!(ga2, poi, text=string(poi.id), fontsize=3)
 	end
 	
 	fig2;
