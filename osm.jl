@@ -51,26 +51,16 @@ Request Data via Overpass API from OpenStreetMap and save it to JSON file
 "
 
 # ╔═╡ 00c286ca-93ab-4286-b20c-423b42e2d761
-# ╠═╡ disabled = true
-#=╠═╡
 overpass_string = "
 [out:json][timeout:25];
 relation("*string(relationID)*");
-(._;>>;);
-out;";
-  ╠═╡ =#
-
-# ╔═╡ 0220c270-5c47-4d65-9583-91e54b51e978
-overpass_string = "[out:json][timeout:25];
-way(id:$wayID);
-way(bn);
 (._;>>;);
 out;";
 
 # ╔═╡ 18382d5a-5621-4447-8fa0-a6c2ae09af1d
 begin
 	using HTTP
-	overpass_response_file = "./$wayID.overpass.json"
+	overpass_response_file = "./$relationID.rel.overpass.json"
 	# overpass_endpoint = "https://overpass-api.de/api/interpreter"
 	overpass_endpoint = "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
 	
@@ -81,12 +71,24 @@ begin
 	end
 end
 
+# ╔═╡ 0220c270-5c47-4d65-9583-91e54b51e978
+# ╠═╡ disabled = true
+#=╠═╡
+overpass_string = "[out:json][timeout:25];
+way(id:$wayID);
+(._;>>;);
+out;";
+  ╠═╡ =#
+
 # ╔═╡ cc0da147-448d-41f3-bc07-1c19d538efc7
 md"## Process data
 Reads JSON file and prepares data"
 
 # ╔═╡ faa14405-83f4-4609-b4ad-a8cfaebb3526
 overpass_data = JSON.parsefile(overpass_response_file);
+
+# ╔═╡ 73fea8ce-5a36-44f1-8e54-44119dd5c67f
+overpass_relations = filter(n -> n["type"] == "relation", overpass_data["elements"]);
 
 # ╔═╡ 13c225c6-e384-40ce-80c3-bdc60bac9846
 overpass_nodes = filter(n -> n["type"] == "node", overpass_data["elements"]);
@@ -128,12 +130,42 @@ end
 # ╔═╡ 68f6b5a7-caf1-496b-8b92-5230aa91f156
 overpass_ways = filter(n -> n["type"] == "way", overpass_data["elements"]);
 
+# ╔═╡ 337b5a12-eb76-4bb3-9f5e-95d7a19b4034
+ways = Dict(way["id"] => way for way in overpass_ways);
+
 # ╔═╡ 33fb8544-39db-43c4-962a-ac94c63c6dfa
 md"## Create Graph"
 
 # ╔═╡ 721272b3-b6f7-4262-ae68-d4cec9142b84
-function add_vertex_to_track_graph(graph, node_id) 
-	graph[node_id] = Point(nodes[node_id]["lon"], nodes[node_id]["lat"])
+function add_vertex_to_track_graph(graph, node_id)
+	node = nodes[node_id]
+	
+	
+ 	point = Point(node["lon"], node["lat"])
+
+	signal = ""
+	if haskey(node, "tags") && get(node["tags"], "railway", false) == "signal"
+		@debug node["tags"]
+		if get(node["tags"], "railway:signal:direction", false) == "backward"
+			signal = "wrong_direction"
+		elseif get(node["tags"], "railway:signal:distant:repeated", false) == "yes"
+			signal = "repeated"
+		elseif haskey(node["tags"], "railway:signal:distant")
+			signal = "distant"
+		elseif haskey(node["tags"], "railway:signal:speed_limit")
+			signal = "speed"
+		elseif haskey(node["tags"], "railway:signal:crossing_info")
+			signal = "wrong_direction"
+		elseif haskey(node["tags"], "railway:signal:combined")
+			signal = "main"
+		else
+			signal = "unknown"
+		end
+	end
+	
+	poi = meta(point, signal=signal)
+
+	graph[node_id] = poi
 end;
 
 # ╔═╡ 65fc3ed7-969e-472c-a60d-04705cacee6b
@@ -141,20 +173,24 @@ begin
 	track_graph = MetaGraph(
 		DiGraph(),
 		label_type=Int, # OSM Id
-		vertex_data_type=Point,
+		vertex_data_type=PointMeta,
 		edge_data_type=Dict
 	);
-	
-	for way in overpass_ways
-		# Add first vertex, because it's skipped in the loop
-		add_vertex_to_track_graph(track_graph, first(way["nodes"]))
-	
-		for (prev_node_id, node_id) in partition(way["nodes"], 2, 1)
-			# Add Vertex to graph
-			add_vertex_to_track_graph(track_graph, node_id)
-			
-			# Add Edge
-			track_graph[prev_node_id, node_id] = Dict()
+
+	for relation in overpass_relations
+		@debug relation
+		for member in relation["members"]
+			way = ways[member["ref"]]
+			# Add first vertex, because it's skipped in the loop
+			add_vertex_to_track_graph(track_graph, first(way["nodes"]))
+		
+			for (prev_node_id, node_id) in partition(way["nodes"], 2, 1)
+				# Add Vertex to graph
+				add_vertex_to_track_graph(track_graph, node_id)
+				
+				# Add Edge
+				track_graph[prev_node_id, node_id] = Dict()
+			end
 		end
 	end
 end
@@ -248,11 +284,48 @@ begin
 	lines!(ga, edge_points, color=:black)
 	
 	# Draw vertices
-	scatter!(ga, vertex_points, color=radii, markersize=20, nan_color=:snow3)
+	scatter!(ga, vertex_points, color=radii, markersize=5, nan_color=:snow3)
 	
 	# bracket!([(track_graph[vertex1], track_graph[vertex2])], text="1", color=:transparent, width=0)
 	
 	fig;
+end
+
+# ╔═╡ ef619471-e11b-4edb-b130-b98f94d5e435
+begin
+	fig2 = Figure()
+	ga2 = GeoAxis(fig2[1, 1]; dest = "+proj=merc")
+	
+	# Draw edges
+	lines!(ga2, edge_points, color=:black)
+
+	for label in labels(track_graph)
+		poi = track_graph[label]
+
+		color = :transparent
+
+		if poi.signal == "main"
+			color = :green
+		elseif poi.signal == "distant"
+			color = :orange
+		elseif poi.signal == "speed"
+			color = :blue
+		elseif poi.signal == "wrong_direction"
+			color = :snow3
+		elseif poi.signal == "repeated"
+			color = :yellow
+		elseif poi.signal == "unknown"
+			color = :red
+		elseif poi.signal != ""
+			color = :red
+		end
+		
+		
+		# Draw vertices
+		scatter!(ga2, poi, color=color, markersize=20)
+	end
+	
+	fig2;
 end
 
 # ╔═╡ af77e83b-2ad5-4707-968b-79bdd15f0fb3
@@ -2140,10 +2213,12 @@ version = "3.5.0+0"
 # ╟─cc0da147-448d-41f3-bc07-1c19d538efc7
 # ╠═e0d70b88-b6ae-4c39-b7cc-c4a5455f0434
 # ╠═faa14405-83f4-4609-b4ad-a8cfaebb3526
+# ╠═73fea8ce-5a36-44f1-8e54-44119dd5c67f
 # ╠═13c225c6-e384-40ce-80c3-bdc60bac9846
 # ╠═239b9c20-fc29-482a-8a48-f7ae9264ab28
 # ╟─d9de89fd-333b-43d9-988f-ee23a57f7069
 # ╠═68f6b5a7-caf1-496b-8b92-5230aa91f156
+# ╠═337b5a12-eb76-4bb3-9f5e-95d7a19b4034
 # ╟─33fb8544-39db-43c4-962a-ac94c63c6dfa
 # ╠═a1c68695-0feb-45b3-9982-239ad1139d70
 # ╠═65fc3ed7-969e-472c-a60d-04705cacee6b
@@ -2159,6 +2234,7 @@ version = "3.5.0+0"
 # ╠═5f10d889-6285-4de6-a242-fa6c1ab7c9f9
 # ╠═b380cdbd-3b18-43f1-ab66-34781faacc4c
 # ╠═6ef552a0-4d86-479e-a60f-2ed5d63d8bfd
+# ╠═ef619471-e11b-4edb-b130-b98f94d5e435
 # ╟─af77e83b-2ad5-4707-968b-79bdd15f0fb3
 # ╟─9eb627d9-e6f1-46ec-a846-f1b5d6633789
 # ╟─a702c503-b775-4548-ba2d-c5610fd40ead
