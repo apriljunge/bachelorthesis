@@ -17,14 +17,14 @@ end
 # ╔═╡ 14690899-87ee-4be0-83cb-8b2bbbbbfc88
 using PlutoUI
 
-# ╔═╡ e0d70b88-b6ae-4c39-b7cc-c4a5455f0434
-using JSON
+# ╔═╡ 0d086dc1-1c2e-4a97-9113-217b6ac93a2c
+using JSON3
 
 # ╔═╡ a1c68695-0feb-45b3-9982-239ad1139d70
-using Graphs, GeometryBasics, MetaGraphsNext, IterTools
+using Graphs, GeometryBasics, MetaGraphsNext, IterTools, Geodesy
 
 # ╔═╡ ac38c36f-cfcb-4cda-9c4e-f772ea64d068
-using GeoMakie, CairoMakie, GeoJSON, Downloads, Geodesy
+using GeoMakie, CairoMakie, Downloads
 
 # ╔═╡ d6b10428-e2a9-4e99-a2f7-0e979862324e
 begin
@@ -60,6 +60,7 @@ out;";
 # ╔═╡ 18382d5a-5621-4447-8fa0-a6c2ae09af1d
 begin
 	using HTTP
+	response = ""
 	overpass_response_file = "./$relationID.rel.overpass.json"
 	# overpass_endpoint = "https://overpass-api.de/api/interpreter"
 	overpass_endpoint = "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
@@ -84,115 +85,169 @@ out;";
 md"## Process data
 Reads JSON file and prepares data"
 
-# ╔═╡ faa14405-83f4-4609-b4ad-a8cfaebb3526
-overpass_data = JSON.parsefile(overpass_response_file);
+# ╔═╡ a2d8df66-0dbb-4a84-8e98-17982430b8a6
+json_string = read(overpass_response_file, String);
+
+# ╔═╡ 61090d60-6e72-4b8c-b228-b67ce6dc6ffb
+overpass_data = JSON3.read(json_string);
 
 # ╔═╡ 73fea8ce-5a36-44f1-8e54-44119dd5c67f
-overpass_relations = filter(n -> n["type"] == "relation", overpass_data["elements"]);
-
-# ╔═╡ 13c225c6-e384-40ce-80c3-bdc60bac9846
-overpass_nodes = filter(n -> n["type"] == "node", overpass_data["elements"]);
-
-# ╔═╡ 239b9c20-fc29-482a-8a48-f7ae9264ab28
-nodes = Dict(node["id"] => node for node in overpass_nodes);
-
-# ╔═╡ d9de89fd-333b-43d9-988f-ee23a57f7069
-# ╠═╡ disabled = true
-#=╠═╡
-begin
-	unique_way_nodes = Dict()
-	for node in overpass_nodes
-		nodes[node["id"]] = node
-		# if haskey(node, "tags")
-		# 	for t in node["tags"]
-		# 		println(t)
-		# 	end
-		# 	if ("railway" => "switch") in node["tags"]
-		# 		println("Its a switch")
-		# 	elseif ("railway" => "signal") in node["tags"]
-		# 		println("Its a signal")
-		# 	else
-		# 		for tag in node["tags"]
-		# 			if tag.first == "railway:switch"
-		# 				println("Its a switch")
-		# 				break
-		# 			# else
-		# 			# 	println(tag, " ")
-		# 			end
-		# 		end	
-		# 	end
-		# end
-		# println()
-	end
-end
-  ╠═╡ =#
-
-# ╔═╡ 68f6b5a7-caf1-496b-8b92-5230aa91f156
-overpass_ways = filter(n -> n["type"] == "way", overpass_data["elements"]);
-
-# ╔═╡ 337b5a12-eb76-4bb3-9f5e-95d7a19b4034
-ways = Dict(way["id"] => way for way in overpass_ways);
+overpass_relations = filter(n -> n.type == "relation", overpass_data.elements);
 
 # ╔═╡ 33fb8544-39db-43c4-962a-ac94c63c6dfa
 md"## Create Graph"
 
-# ╔═╡ 721272b3-b6f7-4262-ae68-d4cec9142b84
-function add_vertex_to_track_graph(graph, node_id)
-	node = nodes[node_id]
-	
-	
- 	point = Point(node["lon"], node["lat"])
+# ╔═╡ 9d83a8cb-9416-4f85-8a20-b6b4083c30c9
+osm_elements = Dict(el.id => el for el in overpass_data.elements);
 
+# ╔═╡ 6de21070-3cdb-484f-81a0-032aefb4e825
+function get_osm_element!(osm_id::Int64)
+	return osm_elements[osm_id]
+end;
+
+# ╔═╡ 92d0c977-b205-4af6-b70e-3f872cc293d7
+function point_from_nodeid!(node_id::Int64)
+	node = get_osm_element!(node_id)
+	return Point( node.lon, node.lat)
+end;
+
+# ╔═╡ 08c55f13-332c-4237-a2d9-85194393cd4e
+function get_speed_limits!(way)
+	speeds = (
+		max 		= parse(Float64, get(way.tags, "maxspeed", "NaN")),
+		forward 	= parse(Float64, get(way.tags, "maxspeed:forward", "NaN")),
+		backward 	= parse(Float64, get(way.tags, "maxspeed:backward", "NaN")),
+	)
+
+	if get(way.tags, "railway:maxspeed:straight", false) != false
+		@debug "str", maxspeed => way.tags["railway:maxspeed:straight"]
+		maxspeed = way.tags["railway:maxspeed:straight"]
+	end
+
+	if get(way.tags, "railway:maxspeed:diverging", false) != false
+		@debug "str", maxspeed => way.tags["railway:maxspeed:diverging"]
+		maxspeed = way.tags["railway:maxspeed:diverging"]
+	end
+
+	return speeds
+end
+
+# ╔═╡ 721272b3-b6f7-4262-ae68-d4cec9142b84
+function add_vertex_to_track_graph(graph, node_id, track_length, maxspeed)
+	node = get_osm_element!(node_id)
+	point = point_from_nodeid!(node_id)
+	latlon = LatLon(point[1], point[2])
+	
 	signal = ""
-	if haskey(node, "tags") && get(node["tags"], "railway", false) == "signal"
-		# @debug node["tags"]
-		if get(node["tags"], "railway:signal:direction", false) == "backward"
-			signal = "wrong_direction"
-		elseif get(node["tags"], "railway:signal:distant:repeated", false) == "yes"
-			signal = "repeated"
-		elseif haskey(node["tags"], "railway:signal:distant")
-			signal = "distant"
-		elseif haskey(node["tags"], "railway:signal:speed_limit")
-			signal = "speed"
-		elseif haskey(node["tags"], "railway:signal:crossing_info")
-			signal = "wrong_direction"
-		elseif haskey(node["tags"], "railway:signal:combined")
-			signal = "main"
-		else
-			signal = "unknown"
+	if haskey(node, "tags")
+		if get(node.tags, "railway", false) == "signal"
+			if get(node["tags"], "railway:signal:direction", false) == "backward"
+				signal = "wrong_direction"
+			elseif get(node["tags"], "railway:signal:distant:repeated", false) == "yes"
+				signal = "repeated"
+			elseif haskey(node["tags"], "railway:signal:distant")
+				signal = "distant"
+			elseif haskey(node["tags"], "railway:signal:speed_limit")
+				signal = "speed"
+			elseif haskey(node["tags"], "railway:signal:crossing_info")
+				signal = "wrong_direction"
+			elseif haskey(node["tags"], "railway:signal:combined")
+				signal = "main"
+			else
+				signal = "unknown"
+			end
+		end
+
+		if get(node.tags, "maxspeed", false) != false
+			@info "eieieieie"
 		end
 	end
 	
-	poi = meta(point, signal=signal, id=node_id)
+	poi = meta(
+		point,
+		signal=signal,
+		id=node_id,
+		latlon=latlon,
+		pos=track_length,
+		maxspeed=maxspeed
+	)
 
-	graph[node_id] = poi
+	graph[poi] = node_id
 end;
 
 # ╔═╡ 65fc3ed7-969e-472c-a60d-04705cacee6b
 begin
 	track_graph = MetaGraph(
 		DiGraph(),
-		label_type=Int, # OSM Id
-		vertex_data_type=PointMeta,
+		label_type=PointMeta,
+		vertex_data_type=Int64,
 		edge_data_type=Dict
 	);
 
+	track_length = 0.0
+
 	for relation in overpass_relations
-		@debug relation["members"]
-		# @debug relation
-		for member in relation["members"][1:3]
-			if member["type"] == "way"
-				way = ways[member["ref"]]
-				# Add first vertex, because it's skipped in the loop
-				add_vertex_to_track_graph(track_graph, first(way["nodes"]))
-			
-				for (prev_node_id, node_id) in partition(way["nodes"], 2, 1)
-					# Add Vertex to graph
-					add_vertex_to_track_graph(track_graph, node_id)
-					
-					# Add Edge
-					track_graph[prev_node_id, node_id] = Dict()
+		# Only train routes
+		# See https://wiki.openstreetmap.org/wiki/Relation:route
+		if !(get(relation.tags, "route", "") in ["railway", "tracks", "train"])
+			continue
+		end
+		
+		for member in relation.members
+			# Only ways, not nodes!
+			if member.type != "way"
+				continue
+			end
+
+			way =  get_osm_element!(member["ref"])
+			way_nodes = way.nodes
+
+
+			# Skip ways that are platform or station
+			if haskey(way, "tags")
+				railway_type = get(way.tags, "railway", false)
+				if railway_type == false
+					continue
+				else
+					if railway_type in ["platform", "station"]
+						continue
+					end
 				end
+			end
+
+
+			# Umkehrmagie um einen korrekten Graphen zu bauen
+			first_point = point_from_nodeid!(first(way_nodes))
+			if !haskey(track_graph, first_point) && length(labels(track_graph)) > 0
+				last_point = point_from_nodeid!(last(way_nodes))
+				if haskey(track_graph, last_point)
+					way_nodes = reverse(way_nodes)
+				else
+					@error """Could not add nodes for $way.id"""
+					continue
+				end
+			end
+
+			maxspeed = get_speed_limits!(way)
+
+			# Add first vertex, because it's skipped in the loop
+			add_vertex_to_track_graph(track_graph, first(way_nodes), 0, maxspeed)
+		
+			for (prev_node_id, node_id) in partition(way_nodes, 2, 1)
+				
+				prev_point = point_from_nodeid!(prev_node_id)
+				point = point_from_nodeid!(node_id)
+
+				prev_latlon = LatLon(prev_point[1], prev_point[2])
+				latlon = LatLon(point[1], point[2])
+				
+				track_length += euclidean_distance(prev_latlon, latlon)
+				
+				# Add Vertex to graph
+				add_vertex_to_track_graph(track_graph, node_id, track_length, maxspeed)
+				
+				# Add Edge
+				track_graph[prev_point, point] = Dict()
 			end
 		end
 	end
@@ -233,17 +288,16 @@ end
 # ╔═╡ 603538b6-119d-4ea3-949e-1bb5a9cc965a
 begin
 	radii = Float64[]
-	for label in labels(track_graph)
-		outneighbor_label = outneighbor_labels(track_graph, label)
-		inneighbor_label = inneighbor_labels(track_graph, label)
-		vertex = track_graph[label]
+	for point in labels(track_graph)
+		outneighbor_points = outneighbor_labels(track_graph, point)
+		inneighbor_points = inneighbor_labels(track_graph, point)
 		
-		if length(outneighbor_label) == 1 && length(inneighbor_label) == 1
-			before_node = track_graph[first(outneighbor_label)]
-			after_node = track_graph[first(inneighbor_label)]
+		if length(outneighbor_points) == 1 && length(inneighbor_points) == 1
+			before_point = first(outneighbor_points)
+			after_point = first(inneighbor_points)
 	
 			# Radii > 700 m keinen Einfluss mehr
-			radius = calculate_radius(before_node, vertex, after_node)
+			radius = calculate_radius(before_point, point, after_point)
 			
 			# # Maximum Radius is 2500m in DB Germany
 			if radius > 3000
@@ -256,38 +310,33 @@ begin
 	end
 end
 
-# ╔═╡ d3539870-311a-4dfd-aae5-8dd2661e00dd
-geoger = GeoJSON.read(read(Downloads.download("https://raw.githubusercontent.com/isellsoap/deutschlandGeoJSON/main/4_kreise/3_mittel.geo.json"), String))
-
 # ╔═╡ 5f10d889-6285-4de6-a242-fa6c1ab7c9f9
 begin
-	edge_points = [track_graph[first(edge_labels(track_graph))[1]]]
-	for (label1, label2) in edge_labels(track_graph)
-		push!(edge_points, track_graph[label2])
+	edge_points = GeometryBasics.Point2{Float64}[]
+	push!(edge_points, first(edge_labels(track_graph))[1])
+	for (point1, point2) in edge_labels(track_graph)
+		push!(edge_points, point2)
 	end
 end
 
 # ╔═╡ b380cdbd-3b18-43f1-ab66-34781faacc4c
 begin
 	vertex_points = GeometryBasics.Point2{Float64}[]
-	for label in labels(track_graph)
-		push!(vertex_points, track_graph[label])
+	for point in labels(track_graph)
+		push!(vertex_points, point)
 	end
 end
 
 # ╔═╡ 6ef552a0-4d86-479e-a60f-2ed5d63d8bfd
 begin
-	fig = Figure()
+	fig = Figure(size = (1000, 800))
 	ga = GeoAxis(fig[1, 1]; dest = "+proj=merc")
 
-	# Draw Landkreis shape
-	# poly!(ga, geoger; strokewidth = 0.7, color=:transparent, rasterize=5,  xautolimits=false, yautolimits=false)
-	
 	# Draw edges
 	lines!(ga, edge_points, color=:black)
 	
 	# Draw vertices
-	scatter!(ga, vertex_points, color=radii, markersize=5, nan_color=:snow3)
+	scatter!(ga, vertex_points, color=radii, markersize=2, nan_color=:transparent)
 	
 	# bracket!([(track_graph[vertex1], track_graph[vertex2])], text="1", color=:transparent, width=0)
 	
@@ -296,18 +345,32 @@ end
 
 # ╔═╡ ef619471-e11b-4edb-b130-b98f94d5e435
 begin
-	fig2 = Figure()
+	fig2 = Figure(size = (1000, 800))
 	ga2 = GeoAxis(fig2[1, 1]; dest = "+proj=merc")
 	
 	# Draw edges
 	for (p1, p2) in edge_labels(track_graph)
-		lines!(ga2, [track_graph[p1], track_graph[p2]], color=:black)
+		lines!(ga2, [p1, p2], color=:gray)
 	end
 
-	for label in labels(track_graph)
-		poi = track_graph[label]
-
+	for poi in labels(track_graph)
 		color = :transparent
+
+		outneighbor_points = outneighbor_labels(track_graph, poi)
+		inneighbor_points = inneighbor_labels(track_graph, poi)
+		
+		if length(outneighbor_points) != 1 || length(inneighbor_points) != 1
+			# text!(ga2, poi, text=string(poi.id), fontsize=3)
+			if length(outneighbor_points) == 0
+				color = :red
+				# text!(ga2, poi, text=string(length(inneighbor_label)), fontsize=3)
+			else
+				# text!(ga2, poi, text=string(length(outneighbor_label)), fontsize=3)
+				# text!(ga2, poi, text=string(poi.id), fontsize=3)
+
+				color = :green
+			end
+		end
 
 		if poi.signal == "main"
 			color = :green
@@ -325,15 +388,78 @@ begin
 			color = :red
 		end
 		
-		
 		# Draw vertices
-		# scatter!(ga2, poi, color=color, markersize=1)
+		scatter!(ga2, poi, color=color, markersize=5)
 
 		# text!(ga2, poi, text=string(poi.id), fontsize=3)
 	end
 	
 	fig2;
 end
+
+# ╔═╡ 7534d012-bf2d-456b-95d9-91b528349a45
+begin
+	xs = Float64[]
+	y_max = Float64[]
+	y_forward = Float64[]
+	y_backgward = Float64[]
+
+	x_main = Float64[]
+	x_speed = Float64[]
+	x_distant = Float64[]
+	
+	for point in labels(track_graph)
+		m = meta(point)
+		
+		push!(xs, m.pos / 1000)
+		push!(y_max, m.maxspeed.max)
+		push!(y_forward, m.maxspeed.forward)
+		push!(y_backgward, m.maxspeed.backward)
+		
+		if m.signal == "main"
+			push!(x_main, m.pos / 1000)
+		end
+
+		if m.signal == "speed"
+			push!(x_speed, m.pos / 1000)
+		end
+
+		if m.signal == "distant"
+			push!(x_distant, m.pos / 1000)
+		end
+		
+		# @debug meta(point)
+	end
+end
+
+# ╔═╡ 090814bb-6b1d-4225-867a-7f7e108c0c49
+begin
+	fig_ = Figure(size = (3000, 500))
+
+	ax = Axis(fig_[1, 1], xlabel = "km", ylabel = "v_max [km/h]")
+	hidespines!(ax, :t, :r)
+	ylims!(ax; low=0)
+
+	vlines!(x_speed, color = :gray, linestyle=:dash)
+	scatter!(x_speed, [1], markersize=10, label = "Geschwindigkeitsänderung", color = :gray)
+	# text!(x_speed, fill(5, length(x_speed)); text = "this is point")
+
+	
+	stairs!(xs, y_max, step=:pre, label = "maxspeed")
+	stairs!(xs, y_forward, step=:pre, label = "maxspeed:forward")
+	stairs!(xs, y_backgward, step=:pre, label = "maxspeed:backward")
+
+	
+	scatter!(x_distant, [1], markersize=10, label = "Vorsignal")
+	scatter!(x_main, [1], markersize=10, label = "Hauptsignal")
+
+	fig_[1, 2] = Legend(fig_, ax, "Quellen", framevisible = false)
+
+	fig_
+end
+
+# ╔═╡ e4802d89-9a44-47e6-83a7-94ce60de8295
+
 
 # ╔═╡ af77e83b-2ad5-4707-968b-79bdd15f0fb3
 warning(text) = Markdown.MD(Markdown.Admonition("warning", "Warning!", [text]));
@@ -358,16 +484,27 @@ PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
-GeoJSON = "61d90e0f-e114-555e-ac52-39dfb47a3ef9"
 GeoMakie = "db073c08-6b98-4ee5-b6a4-5efafb3259c6"
 Geodesy = "0ef565a4-170c-5f04-8de2-149903a85f3d"
 GeometryBasics = "5c1252a2-5f33-56bf-86c9-59e7332b4326"
 Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
 IterTools = "c8e1da08-722c-5040-9ed9-7db0dc04731e"
-JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 MetaGraphsNext = "fa8bd995-216d-47f1-8a91-f3b68fbeb377"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
+
+[compat]
+CairoMakie = "~0.11.9"
+GeoMakie = "~0.6.2"
+Geodesy = "~1.1.0"
+GeometryBasics = "~0.4.10"
+Graphs = "~1.9.0"
+HTTP = "~1.10.3"
+IterTools = "~1.10.0"
+JSON3 = "~1.14.0"
+MetaGraphsNext = "~0.7.0"
+PlutoUI = "~0.7.58"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
@@ -376,7 +513,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.10.2"
 manifest_format = "2.0"
-project_hash = "1f5e48af2cd242c70f3d708d54ae4663097a2c82"
+project_hash = "474c74fc4903c4e5fb15e38d28c96712b25a0c94"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -2218,16 +2355,16 @@ version = "3.5.0+0"
 # ╠═0220c270-5c47-4d65-9583-91e54b51e978
 # ╠═18382d5a-5621-4447-8fa0-a6c2ae09af1d
 # ╟─cc0da147-448d-41f3-bc07-1c19d538efc7
-# ╠═e0d70b88-b6ae-4c39-b7cc-c4a5455f0434
-# ╠═faa14405-83f4-4609-b4ad-a8cfaebb3526
+# ╠═0d086dc1-1c2e-4a97-9113-217b6ac93a2c
+# ╠═a2d8df66-0dbb-4a84-8e98-17982430b8a6
+# ╠═61090d60-6e72-4b8c-b228-b67ce6dc6ffb
 # ╠═73fea8ce-5a36-44f1-8e54-44119dd5c67f
-# ╠═13c225c6-e384-40ce-80c3-bdc60bac9846
-# ╠═239b9c20-fc29-482a-8a48-f7ae9264ab28
-# ╟─d9de89fd-333b-43d9-988f-ee23a57f7069
-# ╠═68f6b5a7-caf1-496b-8b92-5230aa91f156
-# ╠═337b5a12-eb76-4bb3-9f5e-95d7a19b4034
 # ╟─33fb8544-39db-43c4-962a-ac94c63c6dfa
 # ╠═a1c68695-0feb-45b3-9982-239ad1139d70
+# ╠═9d83a8cb-9416-4f85-8a20-b6b4083c30c9
+# ╠═6de21070-3cdb-484f-81a0-032aefb4e825
+# ╠═92d0c977-b205-4af6-b70e-3f872cc293d7
+# ╠═08c55f13-332c-4237-a2d9-85194393cd4e
 # ╠═65fc3ed7-969e-472c-a60d-04705cacee6b
 # ╟─a94e3463-acf3-4dbf-8e87-60ce4998bf35
 # ╠═721272b3-b6f7-4262-ae68-d4cec9142b84
@@ -2237,11 +2374,13 @@ version = "3.5.0+0"
 # ╠═fcbe51d5-9edc-4f96-8013-a666aaa47105
 # ╠═603538b6-119d-4ea3-949e-1bb5a9cc965a
 # ╠═6b6b438c-a416-418f-974d-a7e6bc8b9d13
-# ╠═d3539870-311a-4dfd-aae5-8dd2661e00dd
 # ╠═5f10d889-6285-4de6-a242-fa6c1ab7c9f9
 # ╠═b380cdbd-3b18-43f1-ab66-34781faacc4c
 # ╠═6ef552a0-4d86-479e-a60f-2ed5d63d8bfd
 # ╠═ef619471-e11b-4edb-b130-b98f94d5e435
+# ╠═7534d012-bf2d-456b-95d9-91b528349a45
+# ╠═090814bb-6b1d-4225-867a-7f7e108c0c49
+# ╠═e4802d89-9a44-47e6-83a7-94ce60de8295
 # ╟─af77e83b-2ad5-4707-968b-79bdd15f0fb3
 # ╟─9eb627d9-e6f1-46ec-a846-f1b5d6633789
 # ╟─a702c503-b775-4548-ba2d-c5610fd40ead
