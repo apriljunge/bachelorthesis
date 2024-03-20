@@ -129,6 +129,8 @@ function get_speed_limits!(way)
 		maxspeed = way.tags["railway:maxspeed:diverging"]
 	end
 
+	# TODO brauchts das für weitere Anlaysen?
+	
 	return speeds
 end
 
@@ -199,7 +201,7 @@ begin
 				continue
 			end
 
-			way =  get_osm_element!(member["ref"])
+			way =  get_osm_element!(member.ref)
 			way_nodes = way.nodes
 
 
@@ -217,6 +219,7 @@ begin
 
 
 			# Umkehrmagie um einen korrekten Graphen zu bauen
+			# TODO Auslagern und Richtungen drehen!
 			first_point = point_from_nodeid!(first(way_nodes))
 			if !haskey(track_graph, first_point) && length(labels(track_graph)) > 0
 				last_point = point_from_nodeid!(last(way_nodes))
@@ -400,35 +403,34 @@ end
 # ╔═╡ 7534d012-bf2d-456b-95d9-91b528349a45
 begin
 	xs = Float64[]
-	y_max = Float64[]
-	y_forward = Float64[]
-	y_backgward = Float64[]
 
-	x_main = Float64[]
-	x_speed = Float64[]
-	x_distant = Float64[]
-	
+	y_speeds = (
+		max 		= Float64[],
+		forward 	= Float64[],
+		backward 	= Float64[]
+	)
+
+	pois_x = (
+		main 		= Float64[],
+		speed 		= Float64[],
+		distant 	= Float64[]
+	)
+		
 	for point in labels(track_graph)
 		m = meta(point)
+		l = m.pos / 1000
 		
-		push!(xs, m.pos / 1000)
-		push!(y_max, m.maxspeed.max)
-		push!(y_forward, m.maxspeed.forward)
-		push!(y_backgward, m.maxspeed.backward)
-		
-		if m.signal == "main"
-			push!(x_main, m.pos / 1000)
+		push!(xs, l)
+
+		for cat in keys(y_speeds)
+			push!(getfield(y_speeds, cat), getfield(m.maxspeed, cat))
 		end
 
-		if m.signal == "speed"
-			push!(x_speed, m.pos / 1000)
+		for cat in keys(pois_x)
+			if m.signal == string(cat)
+				push!(getfield(pois_x, cat), l)
+			end
 		end
-
-		if m.signal == "distant"
-			push!(x_distant, m.pos / 1000)
-		end
-		
-		# @debug meta(point)
 	end
 end
 
@@ -440,18 +442,19 @@ begin
 	hidespines!(ax, :t, :r)
 	ylims!(ax; low=0)
 
-	vlines!(x_speed, color = :gray, linestyle=:dash)
-	scatter!(x_speed, [1], markersize=10, label = "Geschwindigkeitsänderung", color = :gray)
-	# text!(x_speed, fill(5, length(x_speed)); text = "this is point")
+	# text!(pois_x.speed, [5]; text = "this is point")
+
+	vlines!(pois_x.speed, color = :gray, linestyle=:dash)
+
+	stairs!(xs, y_speeds.max, step=:pre, label = "maxspeed")
+	stairs!(xs, y_speeds.forward, step=:pre, label = "maxspeed:forward")
+	stairs!(xs, y_speeds.backward, step=:pre, label = "maxspeed:backward")
+
+	scatter!(pois_x.speed, [1], markersize=10, label = "Geschwindigkeitsänderung", color = :gray)
 
 	
-	stairs!(xs, y_max, step=:pre, label = "maxspeed")
-	stairs!(xs, y_forward, step=:pre, label = "maxspeed:forward")
-	stairs!(xs, y_backgward, step=:pre, label = "maxspeed:backward")
-
-	
-	scatter!(x_distant, [1], markersize=10, label = "Vorsignal")
-	scatter!(x_main, [1], markersize=10, label = "Hauptsignal")
+	scatter!(pois_x.distant, [1], markersize=10, label = "Vorsignal")
+	scatter!(pois_x.main, [1], markersize=10, label = "Hauptsignal")
 
 	fig_[1, 2] = Legend(fig_, ax, "Quellen", framevisible = false)
 
