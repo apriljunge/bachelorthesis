@@ -36,7 +36,7 @@ end
 md"Relation ID:"
 
 # ╔═╡ 6e58c768-93ab-4481-851f-23041b92157b
-@bind relationID TextField(default="76902")
+@bind relationID TextField(default="5409155")
 
 # ╔═╡ 356b5371-d26b-4ec0-8c8d-0c8f34294d87
 md"### Way IDs
@@ -147,14 +147,16 @@ function add_vertex_to_track_graph(graph, node_id, track_length, maxspeed)
 				signal = "wrong_direction"
 			elseif get(node["tags"], "railway:signal:distant:repeated", false) == "yes"
 				signal = "repeated"
+			elseif haskey(node["tags"], "railway:signal:main")
+				signal = "main"
+			elseif haskey(node["tags"], "railway:signal:combined")
+				signal = "main"
 			elseif haskey(node["tags"], "railway:signal:distant")
 				signal = "distant"
 			elseif haskey(node["tags"], "railway:signal:speed_limit")
 				signal = "speed"
 			elseif haskey(node["tags"], "railway:signal:crossing_info")
 				signal = "wrong_direction"
-			elseif haskey(node["tags"], "railway:signal:combined")
-				signal = "main"
 			else
 				signal = "unknown"
 			end
@@ -436,33 +438,41 @@ end
 
 # ╔═╡ 090814bb-6b1d-4225-867a-7f7e108c0c49
 begin
-	fig_ = Figure(size = (3000, 500))
+	fig_ = Figure(size = (2000, 500))
 
 	ax = Axis(fig_[1, 1], xlabel = "km", ylabel = "v_max [km/h]")
+	ax2 = Axis(fig_[2, 1], height=100)
+	
+	linkxaxes!(ax, ax2)
+	
 	hidespines!(ax, :t, :r)
 	ylims!(ax; low=0)
 
+	hidedecorations!(ax2)
+	hidespines!(ax2)
+	
 	# text!(pois_x.speed, [5]; text = "this is point")
 
-	vlines!(pois_x.speed, color = :gray, linestyle=:dash)
+	vlines!(ax, pois_x.speed, color = :gray, linestyle=:dash)
+	vlines!(ax2, pois_x.speed, color = :gray, linestyle=:dash)
 
-	stairs!(xs, y_speeds.max, step=:pre, label = "maxspeed")
-	stairs!(xs, y_speeds.forward, step=:pre, label = "maxspeed:forward")
-	stairs!(xs, y_speeds.backward, step=:pre, label = "maxspeed:backward")
+	stairs!(ax, xs, y_speeds.max, step=:pre, label = "maxspeed")
+	stairs!(ax, xs, y_speeds.forward, step=:pre, linestyle=:dash, label = "maxspeed:forward")
+	stairs!(ax, xs, y_speeds.backward, step=:pre, linestyle=:dot, label = "maxspeed:backward")
 
-	scatter!(pois_x.speed, [1], markersize=10, label = "Geschwindigkeitsänderung", color = :gray)
 
 	
-	scatter!(pois_x.distant, [1], markersize=10, label = "Vorsignal")
-	scatter!(pois_x.main, [1], markersize=10, label = "Hauptsignal")
+	hlines!(ax2, 0, color = :black, linewidth=5)
+	scatter!(ax2, pois_x.speed, [0], markersize=14, label = "Geschwindigkeitsänderung", color = :gray)
+	scatter!(ax2, pois_x.distant, [0.5], markersize=14, label = "Vorsignal")
+	scatter!(ax2, pois_x.main, [0], markersize=14, label = "Hauptsignal")
 
 	fig_[1, 2] = Legend(fig_, ax, "Quellen", framevisible = false)
+	fig_[2, 2] = Legend(fig_, ax2, "Quellen", framevisible = false)
 
+	
 	fig_
 end
-
-# ╔═╡ e4802d89-9a44-47e6-83a7-94ce60de8295
-
 
 # ╔═╡ af77e83b-2ad5-4707-968b-79bdd15f0fb3
 warning(text) = Markdown.MD(Markdown.Admonition("warning", "Warning!", [text]));
@@ -2352,7 +2362,7 @@ version = "3.5.0+0"
 # ╟─f94dc17b-6db0-471a-a4c1-2fee752dad6d
 # ╟─6e58c768-93ab-4481-851f-23041b92157b
 # ╟─356b5371-d26b-4ec0-8c8d-0c8f34294d87
-# ╟─4925dfd3-c0bc-4ac3-8434-e9963bbabb6c
+# ╠═4925dfd3-c0bc-4ac3-8434-e9963bbabb6c
 # ╟─eecebb31-950a-444f-b29a-15dbea02f445
 # ╠═00c286ca-93ab-4286-b20c-423b42e2d761
 # ╠═0220c270-5c47-4d65-9583-91e54b51e978
@@ -2383,7 +2393,6 @@ version = "3.5.0+0"
 # ╠═ef619471-e11b-4edb-b130-b98f94d5e435
 # ╠═7534d012-bf2d-456b-95d9-91b528349a45
 # ╠═090814bb-6b1d-4225-867a-7f7e108c0c49
-# ╠═e4802d89-9a44-47e6-83a7-94ce60de8295
 # ╟─af77e83b-2ad5-4707-968b-79bdd15f0fb3
 # ╟─9eb627d9-e6f1-46ec-a846-f1b5d6633789
 # ╟─a702c503-b775-4548-ba2d-c5610fd40ead
